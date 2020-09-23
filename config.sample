@@ -1,0 +1,26 @@
+[main]
+verbose = true
+
+[gotify]
+host = http://localhost:8081
+token = AppToken
+
+[imap]
+host = imap.gmail.com
+username = push@gmail.com
+password = secret
+loglevel = 1
+
+[rules.duty]
+from = aaa@bbb.ccc
+subject = CRITICAL
+priority = 9
+   [rules.duty.extras.'android::action'.onReceive]
+     intentUrl = "https://monitor.example.com"
+   [rules.duty.extras.'client::notification'.click]
+     url = "https://gotify.net"
+
+[rules.urlwatch]
+subject = [urlwatch]
+priority = 3
+token = OtherAppToken

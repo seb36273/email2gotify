@@ -1,4 +1,5 @@
-CFG_PATH = "/etc/gotify/imap2gotify.toml"
+from .log import *
+from .config import *
 
 from .gotify import Gotify
-from .imap2 import Imap
+from .imap import Imap

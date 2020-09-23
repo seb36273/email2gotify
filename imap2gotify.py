@@ -1,137 +1,128 @@
 #!/usr/bin/env python3
 # -*- coding: utf8 -*-
 
-
 import os
-
 import email
-import email.message
-import email.parser
-
-from email.header import decode_header
-
 import html2text
-import toml
 
 import libi2g
 
-
-def get_body(msg):
-    if msg.is_multipart():
-        body = get_body(msg.get_payload(0))
-        try:
-            body = body.decode("latin-1").encode("utf8")
-        except:
-            pass
-        return body
-    else:
-        return msg.get_payload(None, True)
-
-
-def mark_down_formatting(html_text):
-    h = html2text.HTML2Text()
-    h.ignore_links = False
-    return h.handle(html_text)
-
-
-def get_subject(msg):
-    try:
-        h = decode_header(msg.get("subject"))
-        return h[0][0].decode("latin-1").encode("utf8")
-    except:
-        return msg.get("subject")
-
+log = libi2g.get_logger()
 
 class Imap2Gotify:
+    
     def __init__(self):
-        self.config = toml.load([os.path.abspath(libi2g.CFG_PATH)])
-        self.verbose = False
-        if "verbose" in self.config["main"]:
-            self.verbose = self.config["main"]["verbose"]
+        
+        self.verbose = libi2g.get_config('main', 'verbose', default=False)
+        
         self.imap = libi2g.Imap()
         self.gotify = libi2g.Gotify()
-
+        
+    def process_mail(self, mail):
+        '''
+            receive each mail as byte message (libi2g.imap --> idle_mail)
+        '''
+        
+        mail = email.message_from_bytes(mail)
+        
+        # get from
+        sender = mail.get('from')
+        
+        # get body
+        if mail.is_multipart():
+            body = get_body(mail.get_payload(0))
+            try:
+                body = body.decode('latin-1').encode('utf8')
+            except:
+                pass
+        else:
+            body = mail.get_payload(None, True)
+            
+        # formatting mark_down of body
+        
+        h = html2text.HTML2Text()
+        h.ignore_links = False
+        
+        body = h.handle(body.decode())
+        
+        # get subject
+        try:
+            h = email.decode_header(mail.get('subject'))
+            subject = h[0][0].decode('latin-1').encode('utf8')
+        except:
+            subject = mail.get('subject')
+            
+        mail = {
+                'body': body,
+                'from': sender,
+                'subject': subject,
+                'priority': 1
+               }
+        
+        return mail
+        
     def process_rules(self, mail):
-        for r in self.config["rules"]:
-            rule = self.config["rules"][r]
+        
+        rules = libi2g.get_config('rules')
+        
+        for sid, rule in rules.items():
+            
             match = False
-
-            if all(k in rule for k in ("from", "subject")):
-                if rule["from"] in mail["from"]:
-                    if rule["subject"] in mail["subject"]:
+            
+            if all(k in rule for k in ('from', 'subject')):
+                if rule['from'] in mail['from']:
+                    if rule['subject'] in mail['subject']:
                         match = True
-
-            elif any(k in rule for k in ("from", "subject")):
-                if "subject" in rule and rule["subject"] in mail["subject"]:
+                        
+            elif any(k in rule for k in ('from', 'subject')):
+                if 'subject' in rule and rule['subject'] in mail['subject']:
                     match = True
-
-                elif "from" in rule and rule["from"] in mail["from"]:
+                    
+                elif 'from' in rule and rule['from'] in mail['from']:
                     match = True
-
-            if match:
-                if "priority" in rule:
-                    mail["priority"] = rule["priority"]
-                else:
-                    print(
-                        f">>> 'priority' params missing in the rule {r}, fallback to 1"
-                    )
-                    # TODO: check if flag exists or priority header in the mail
-                    mail["priority"] = 1
-
-                if "token" in rule:
-                    if self.verbose:
-                        print(rule["token"])
-                    mail["token"] = rule["token"]
-
-                if "extras" in rule:
-                    if self.verbose:
-                        print(rule["extras"])
-                    mail["extras"] = rule["extras"]
-
-                print(
-                    f">>> Mail processed, from: {mail['from']}, subject: {mail['subject']}, priority: {mail['priority']}"
-                )
-
-                return mail
-
-    def main_loop(self):
-
-        c = self.imap.open_connection()
-
-        c.select(self.imap.folder, readonly=False)
-
-        # fetch unseen
-        _, data = c.search(None, "UnSeen")
-        print(">>> enter main loop")
-
-        # read each new mail and send alert
-        for num in data[0].split():
-            _, data = c.fetch(num, "(RFC822)")
-            msg = email.message_from_bytes(data[0][1])
-            body = mark_down_formatting(get_body(msg).decode())
-
-            mail = {
-                "body": body,
-                "from": msg.get("from"),
-                "priority": 1,
-                "subject": get_subject(msg),
-            }
-
-            mail_keep = self.process_rules(mail)
-
-            # send notication
-            if mail_keep:
-                r = self.gotify.push(mail_keep)
-                if r:
-                    # mark as read
-                    c.store(num, "+FLAGS", "(\\Seen)")
+                    
+            if not match:
+                continue
+                
+            if 'priority' in rule:
+                mail['priority'] = int(rule['priority'])
             else:
-                c.store(num, "+FLAGS", "(\\Seen)")
-                print(f"ignoring {mail}")
-
-
-if __name__ == "__main__":
-    imap = libi2g.Imap()
+                log.warn('priority missing in the rule {r}, fallback to 2')
+                # TODO: check if flag exists or priority header in the mail
+                mail['priority'] = 2
+                
+            if 'token' in rule:
+                log.debug('token in rule: %s', rule['token'])
+                mail['token'] = rule['token']
+                
+            if 'extras' in rule:
+                log.debug('extras in rule: %s', rule['extras'])
+                mail['extras'] = rule['extras']
+                
+            log.debug('email processed, from: "{0}", subject: "{1}", priority: "{2}"' \
+                .format(mail['from'], mail['subject'], mail['priority']))
+            
+            return mail
+            
+        log.info('ignoring mail - no rule matches')
+        
+    def main_loop(self):
+        
+        log.debug('enter main loop')
+        
+        mails = self.imap.idle_mail()
+        
+        for mail in mails:
+            
+            mail = self.process_mail(mail)
+            mail = self.process_rules(mail)
+            
+            if mail: # send notication
+                self.gotify.push(mail)
+                
+        log.debug('exit main loop')
+        
+if __name__ == '__main__':
     main = Imap2Gotify()
-
-    imap.idle_mail(main.main_loop)
+    
+    main.main_loop()

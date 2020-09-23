@@ -1,4 +1,5 @@
 html2text
-toml
 requests
 simplejson
+imapclient
+ConfigParser
